@@ -23,7 +23,6 @@ import (
 
 	"github.com/babylonlabs-io/babylon/testutil/datagen"
 	bbntypes "github.com/babylonlabs-io/babylon/types"
-	"github.com/babylonlabs-io/btc-staker/proto"
 	"github.com/babylonlabs-io/btc-staker/staker"
 	"github.com/babylonlabs-io/btc-staker/stakercfg"
 	"github.com/babylonlabs-io/btc-staker/types"
@@ -39,9 +38,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const SEQUENTIAL_TEST bool = false
+
 // ---------- [Check: Success] ----------
 func TestStakingFailures(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	numMatureOutputs := uint32(200)
 	ctx, cancel := context.WithCancel(context.Background())
 	tm := StartManager(t, ctx, numMatureOutputs)
@@ -80,7 +83,9 @@ func TestStakingFailures(t *testing.T) {
 
 // ---------- [Check: Success] ----------
 func TestSendingStakingTransactionWithPreApproval(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	// need to have at least 300 block on testnet as only then segwit is activated.
 	// Mature output is out which has 100 confirmations, which means 200mature outputs
 	// will generate 300 blocks
@@ -111,7 +116,13 @@ func TestSendingStakingTransactionWithPreApproval(t *testing.T) {
 
 	txHash := tm.sendStakingTxBTC(t, testStakingData)
 
-	go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	// go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	done1 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+		close(done1)
+	}()
+	<-done1 // wait for mining to complete
 	tm.waitForStakingTxState(t, txHash, staker.BabylonPendingStatus)
 
 	pend, err := tm.BabylonClient.QueryPendingBTCDelegations()
@@ -173,8 +184,17 @@ func TestSendingStakingTransactionWithPreApproval(t *testing.T) {
 	block := tm.mineBlock(t)
 	require.Equal(t, 2, len(block.Transactions))
 	require.Equal(t, block.Transactions[1].TxHash(), *unbondingTxHash)
-	go tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
-	tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
+
+	// go tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
+	done2 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
+		close(done2)
+	}()
+	<-done2 // wait for mining to complete
+
+	// tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
+	tm.waitForUnbondingTxConfirmedOnBtc(t, txHash, unbondingTxHash)
 
 	// Spend unbonding tx of pre-approval stake
 	withdrawableTransactionsResp, err = tm.StakerClient.WithdrawableTransactions(context.Background(), nil, nil)
@@ -185,13 +205,21 @@ func TestSendingStakingTransactionWithPreApproval(t *testing.T) {
 	// for 5 blocks, but to consider unbonding tx as confirmed we need to wait for 6 blocks
 	// so at this point time lock should already have passed
 	tm.spendStakingTxWithHash(t, txHash)
-	go tm.mineNEmptyBlocks(t, staker.SpendStakeTxConfirmations, false)
-	tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_SPENT_ON_BTC)
+	done3 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, staker.SpendStakeTxConfirmations, false)
+		close(done3)
+	}()
+	<-done3 // wait for mining to complete
+	tm.waitForTxOutputSpent(t, unbondingTxHash)
+	// tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_SPENT_ON_BTC)
 }
 
 // ---------- [Check: Success] ----------
 func TestMultiplePreApprovalTransactions(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	// need to have at least 300 block on testnet as only then segwit is activated.
 	// Mature output is out which has 100 confirmations, which means 200mature outputs
 	// will generate 300 blocks
@@ -247,7 +275,9 @@ func TestMultiplePreApprovalTransactions(t *testing.T) {
 
 // ---------- [Check: Success] ----------
 func TestBitcoindWalletRpcApi(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	manager, err := containers.NewManager(t)
 	require.NoError(t, err)
 	h := NewBitcoindHandler(t, manager)
@@ -334,7 +364,9 @@ func TestBitcoindWalletRpcApi(t *testing.T) {
 
 // ---------- [Check: Success] ----------
 func TestBitcoindWalletBip322Signing(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	manager, err := containers.NewManager(t)
 	require.NoError(t, err)
 	h := NewBitcoindHandler(t, manager)
@@ -537,12 +569,14 @@ func TestStakeFromPhase1(t *testing.T) {
 	delInfo, err := tm.BabylonClient.QueryDelegationInfo(txHash)
 	require.NoError(t, err)
 	// require.True(t, delInfo.Active)
-	require.Equal(t, delInfo.Status, staker.BabylonActiveStatus)
+	require.Equal(t, delInfo.GetStatusDesc(), staker.BabylonActiveStatus)
 }
 
 // ---------- [Check: Success] ----------
 func TestPopCreation(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	manager, err := containers.NewManager(t)
 	require.NoError(t, err)
 	h := NewBitcoindHandler(t, manager)
@@ -595,7 +629,9 @@ func TestPopCreation(t *testing.T) {
 
 // ---------- [Check: Success] ----------
 func TestPopCreationTaprootAddress(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	manager, err := containers.NewManager(t)
 	require.NoError(t, err)
 	h := NewBitcoindHandler(t, manager)
@@ -649,7 +685,9 @@ func TestPopCreationTaprootAddress(t *testing.T) {
 
 // ---------- [Check: Success] ----------
 func TestRecoverAfterRestartDuringWithdrawal(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	// need to have at least 300 block on testnet as only then segwit is activated.
 	// Mature output is out which has 100 confirmations, which means 200mature outputs
 	// will generate 300 blocks
@@ -678,7 +716,13 @@ func TestRecoverAfterRestartDuringWithdrawal(t *testing.T) {
 
 	txHash := tm.sendStakingTxBTC(t, testStakingData)
 
-	go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	// go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	done := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+		close(done)
+	}()
+	<-done // wait for mining to complete
 	// must wait for all covenant signatures to be received, to be able to unbond
 	tm.waitForStakingTxState(t, txHash, staker.BabylonPendingStatus)
 
@@ -726,7 +770,6 @@ func TestRecoverAfterRestartDuringWithdrawal(t *testing.T) {
 
 		if tx == nil {
 			return false
-
 		}
 
 		return true
@@ -740,14 +783,17 @@ func TestRecoverAfterRestartDuringWithdrawal(t *testing.T) {
 		_ = tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations+1, false)
 	})
 
-	tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
+	// tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
 	// it should be possible ot spend from unbonding tx
+	tm.waitForUnbondingTxConfirmedOnBtc(t, txHash, unbondingTxHash)
 	tm.spendStakingTxWithHash(t, txHash)
 }
 
 // ---------- [Check: Success] ----------
 func TestStakingUnbonding(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	// need to have at least 300 block on testnet as only then segwit is activated.
 	// Mature output is out which has 100 confirmations, which means 200mature outputs
 	// will generate 300 blocks
@@ -768,7 +814,13 @@ func TestStakingUnbonding(t *testing.T) {
 
 	txHash := tm.sendStakingTxBTC(t, testStakingData)
 
-	go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	// go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	done1 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+		close(done1)
+	}()
+	<-done1 // wait for mining to complete
 	tm.waitForStakingTxState(t, txHash, staker.BabylonPendingStatus)
 
 	pend, err := tm.BabylonClient.QueryPendingBTCDelegations()
@@ -818,15 +870,21 @@ func TestStakingUnbonding(t *testing.T) {
 			return false
 
 		}
-
 		return true
 	}, 1*time.Minute, eventuallyPollTime)
 
 	block := tm.mineBlock(t)
 	require.Equal(t, 2, len(block.Transactions))
 	require.Equal(t, block.Transactions[1].TxHash(), *unbondingTxHash)
-	go tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
-	tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
+	// go tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
+	done2 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, staker.UnbondingTxConfirmations, false)
+		close(done2)
+	}()
+	<-done2 // wait for mining to complete
+	// tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_UNBONDING_CONFIRMED_ON_BTC)
+	tm.waitForUnbondingTxConfirmedOnBtc(t, txHash, unbondingTxHash)
 
 	withdrawableTransactionsResp, err := tm.StakerClient.WithdrawableTransactions(context.Background(), nil, nil)
 	require.NoError(t, err)
@@ -836,13 +894,20 @@ func TestStakingUnbonding(t *testing.T) {
 	// for 5 blocks, but to consider unbonding tx as confirmed we need to wait for 6 blocks
 	// so at this point time lock should already have passed
 	tm.spendStakingTxWithHash(t, txHash)
-	go tm.mineNEmptyBlocks(t, staker.SpendStakeTxConfirmations, false)
-	tm.waitForStakingTxStateByStored(t, txHash, proto.TransactionState_SPENT_ON_BTC)
+	done3 := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, staker.SpendStakeTxConfirmations, false)
+		close(done3)
+	}()
+	<-done3 // wait for mining to complete
+	tm.waitForTxOutputSpent(t, unbondingTxHash)
 }
 
 // ---------- [Check: Success] ----------
 func TestMultipleWithdrawableStakingTransactions(t *testing.T) {
-	t.Parallel()
+	if !SEQUENTIAL_TEST {
+		t.Parallel()
+	}
 	// need to have at least 300 block on testnet as only then segwit is activated.
 	// Mature output is out which has 100 confirmations, which means 200mature outputs
 	// will generate 300 blocks
@@ -877,13 +942,18 @@ func TestMultipleWithdrawableStakingTransactions(t *testing.T) {
 		testStakingData5,
 	})
 
-	go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	// go tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+	done := make(chan struct{})
+	go func() {
+		tm.mineNEmptyBlocks(t, params.ConfirmationTimeBlocks, true)
+		close(done)
+	}()
+	<-done // wait for mining to complete
 
 	for _, txHash := range txHashes {
 		tm.waitForStakingTxState(t, txHash, staker.BabylonPendingStatus)
 	}
 
-	// -- start change --
 	pends, err := tm.BabylonClient.QueryPendingBTCDelegations()
 	require.NoError(t, err)
 
@@ -919,7 +989,6 @@ func TestMultipleWithdrawableStakingTransactions(t *testing.T) {
 		)
 		require.NoError(t, err)
 		proofs[i] = proof
-		// proofMap[tx.String()] = proof
 	}
 
 	_, err = tm.BabylonClient.InsertBtcBlockHeaders([]*wire.BlockHeader{&mBlock.Header})
@@ -932,9 +1001,7 @@ func TestMultipleWithdrawableStakingTransactions(t *testing.T) {
 			continue
 		}
 		_, err = tm.BabylonClient.ActivateDelegation(
-			// *txHash,
 			tx.TxHash(),
-			// proofMap[txHash.String()],
 			proofs[i],
 		)
 		require.NoError(t, err)

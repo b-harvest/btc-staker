@@ -834,11 +834,48 @@ func (bc *BabylonController) RegisterFinalityProvider(
 	return err
 }
 
+func (bc *BabylonController) QueryDelegationInfo(stakingTxHash *chainhash.Hash) (*btcstypes.BTCDelegationResponse, error) {
+	clientCtx := client.Context{Client: bc.bbnClient.RPCClient}
+	queryClient := btcstypes.NewQueryClient(clientCtx)
+
+	ctx, cancel := getQueryContext(bc.cfg.Timeout)
+	defer cancel()
+
+	var di *btcstypes.BTCDelegationResponse
+
+	// di.FpBtcPkList <- finality provider btc public keys
+
+	if err := retry.Do(func() error {
+		resp, err := queryClient.BTCDelegation(ctx, &btcstypes.QueryBTCDelegationRequest{
+			StakingTxHashHex: stakingTxHash.String(),
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), btcstypes.ErrBTCDelegationNotFound.Error()) {
+				// delegation is not found on babylon, do not retry further
+				return retry.Unrecoverable(ErrDelegationNotFound)
+			}
+			return fmt.Errorf("failed to query delegation info from babylon using client: %w", err)
+		}
+
+		di = resp.GetBtcDelegation()
+		return nil
+	}, RtyAtt, RtyDel, RtyErr, retry.OnRetry(func(n uint, err error) {
+		bc.logger.WithFields(logrus.Fields{
+			"attempt":      n + 1,
+			"max_attempts": RtyAttNum,
+			"error":        err,
+		}).Error("Failed to query babylon for the staking transaction")
+	})); err != nil {
+		return nil, fmt.Errorf("failed to query delegation info: %w", err)
+	}
+	return di, nil
+}
+
 // QueryDelegationInfo queries a delegation info from babylon
 // In the previous version, DelegationInfo has a Active field, which indicates if the delegation is active.
 // To be widely used, Active field is changed to Status field, including each status represented by a string.
 // To check the ACTIVE state as an usual, compare Status field with BabylonActiveStatus in babylontypes.go
-func (bc *BabylonController) QueryDelegationInfo(stakingTxHash *chainhash.Hash) (*DelegationInfo, error) {
+func (bc *BabylonController) QueryDelegationInfo2(stakingTxHash *chainhash.Hash) (*DelegationInfo, error) {
 	clientCtx := client.Context{Client: bc.bbnClient.RPCClient}
 	queryClient := btcstypes.NewQueryClient(clientCtx)
 

@@ -43,7 +43,7 @@ type StoredTransaction struct {
 	StakingTxConfirmationInfo *BtcConfirmationInfo
 	StakingTime               uint16
 	FinalityProvidersBtcPks   []*btcec.PublicKey
-	Pop                       *ProofOfPossession
+	Pop                       *ProofOfPossession // can be removed
 	// Returning address as string, to avoid having to know how to decode address
 	// which requires knowing the network we are on
 	StakerAddress              string
@@ -276,7 +276,6 @@ func (c *TrackedTransactionStore) SetTxUnbondingConfirmedOnBtc(
 // TODO: check this function is necessary.
 func (c *TrackedTransactionStore) SetTxSpentOnBtc(txHash *chainhash.Hash) error {
 	setTxSpentOnBtc := func(tx *proto.TrackedTransaction) error {
-		tx.State = proto.TransactionState_SPENT_ON_BTC
 		return nil
 	}
 

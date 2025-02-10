@@ -2,11 +2,13 @@ package babylonclient
 
 import (
 	"fmt"
+
 	bct "github.com/babylonlabs-io/babylon/client/babylonclient"
 
 	sdkmath "cosmossdk.io/math"
 	"github.com/babylonlabs-io/babylon/testutil/datagen"
 	"github.com/babylonlabs-io/babylon/x/btcstaking/types"
+	btcstypes "github.com/babylonlabs-io/babylon/x/btcstaking/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -83,7 +85,7 @@ type BabylonClient interface {
 	QueryFinalityProvider(btcPubKey *btcec.PublicKey) (*FinalityProviderClientResponse, error)
 	QueryHeaderDepth(headerHash *chainhash.Hash) (uint32, error)
 	IsTxAlreadyPartOfDelegation(stakingTxHash *chainhash.Hash) (bool, error)
-	QueryDelegationInfo(stakingTxHash *chainhash.Hash) (*DelegationInfo, error)
+	QueryDelegationInfo(stakingTxHash *chainhash.Hash) (*btcstypes.BTCDelegationResponse, error)
 	GetLatestBlockHeight() (uint64, error)
 	QueryBtcLightClientTipHeight() (uint32, error)
 }
@@ -175,7 +177,7 @@ func (m *MockBabylonClient) IsTxAlreadyPartOfDelegation(_ *chainhash.Hash) (bool
 	return false, nil
 }
 
-func (m *MockBabylonClient) QueryDelegationInfo(_ *chainhash.Hash) (*DelegationInfo, error) {
+func (m *MockBabylonClient) QueryDelegationInfo(_ *chainhash.Hash) (*btcstypes.BTCDelegationResponse, error) {
 	return nil, fmt.Errorf("delegation do not exist")
 }
 

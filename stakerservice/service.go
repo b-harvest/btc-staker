@@ -89,6 +89,7 @@ func (s *StakerService) stake(_ *rpctypes.Context,
 
 	fpPubKeys := make([]*btcec.PublicKey, 0)
 
+	// wj: convert (string -> []byte -> schnorr.PublicKey)
 	for _, fpPk := range fpBtcPks {
 		fpPkBytes, err := hex.DecodeString(fpPk)
 		if err != nil {
@@ -251,7 +252,7 @@ func (s *StakerService) stakingDetails(
 	}
 
 	details := storedTxToStakingDetails(storedTx)
-	details.StakingState = di.Status
+	details.StakingState = di.GetStatusDesc()
 	return &details, nil
 }
 

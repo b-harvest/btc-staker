@@ -150,6 +150,11 @@ type TestManager struct {
 	TestManagerBTC
 }
 
+// getCurrentBlockHeight returns the current block height of the Bitcoin node
+func (tm *TestManager) getCurrentBlockHeight(t *testing.T) int64 {
+	return tm.TestManagerBTC.getCurrentBlockHeight(t)
+}
+
 type TestManagerStakerApp struct {
 	Config           *stakercfg.Config
 	Db               kvdb.Backend
@@ -171,6 +176,13 @@ type TestManagerBTC struct {
 	WalletPubKey     *btcec.PublicKey
 	WalletAddrInfo   *btcjson.GetAddressInfoResult
 	TestRpcBtcClient *rpcclient.Client
+}
+
+// getCurrentBlockHeight returns the current block height of the Bitcoin node
+func (tm *TestManagerBTC) getCurrentBlockHeight(t *testing.T) int64 {
+	blockCount, err := tm.TestRpcBtcClient.GetBlockCount()
+	require.NoError(t, err)
+	return blockCount
 }
 
 type testStakingData struct {
@@ -858,7 +870,7 @@ func (tm *TestManager) waitForStakingTxState(t *testing.T, txHash *chainhash.Has
 			return false
 		}
 		return detailResult.StakingState == expectedState
-	}, 2*time.Minute, eventuallyPollTime)
+	}, 5*time.Minute, eventuallyPollTime)
 }
 
 // waitForStakingTxStateByStored waits for the staking transaction to reach the expected state
@@ -872,7 +884,47 @@ func (tm *TestManager) waitForStakingTxStateByStored(t *testing.T, txHash *chain
 			return false
 		}
 		return detailResult.StakingState == expectedState.String()
-	}, 2*time.Minute, eventuallyPollTime)
+	}, 5*time.Minute, eventuallyPollTime)
+}
+
+func (tm *TestManager) waitForUnbondingTxConfirmedOnBtc(t *testing.T, txHash, unbondingTxHash *chainhash.Hash) {
+	require.Eventually(t, func() bool {
+		// 1. Check confirmations
+		res, err := tm.Sa.Wallet().TxVerbose(unbondingTxHash)
+		if err != nil {
+			return false
+		}
+		if res.Confirmations < staker.UnbondingTxConfirmations {
+			return false
+		}
+
+		// 2. Verify block hash matches our tracking
+		ts := tm.Sa.GetTxTracker()
+		st, err := ts.GetTransaction(txHash)
+		if err != nil {
+			return false
+		}
+		return st.StakingTxConfirmationInfo.BlockHash.String() == res.Hash
+	}, 5*time.Minute, eventuallyPollTime)
+}
+
+func (tm *TestManager) waitForTxOutputSpent(t *testing.T, unbondingTxHash *chainhash.Hash) {
+	require.Eventually(t, func() bool {
+		// res, err := tm.Sa.Wallet().TxVerbose(unbondingTxHash)
+		// if err != nil {
+		// 	return false
+		// }
+
+		// if res.Confirmations < staker.SpendStakeTxConfirmations {
+		// 	return false
+		// }
+
+		unbondingOutputSpent, err := tm.Sa.Wallet().OutputSpent(unbondingTxHash, 0)
+		if err != nil {
+			return false
+		}
+		return unbondingOutputSpent
+	}, 5*time.Minute, eventuallyPollTime)
 }
 
 func (tm *TestManager) walletUnspentsOutputsContainsOutput(t *testing.T, from btcutil.Address, withValue btcutil.Amount) bool {

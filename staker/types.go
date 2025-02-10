@@ -38,11 +38,11 @@ func babylonPopToDBPop(pop *cl.BabylonPop) *stakerdb.ProofOfPossession {
 	}
 }
 
-func babylonCovSigToDBCovSig(covSig cl.CovenantSignatureInfo) stakerdb.PubKeySigPair {
+func babylonCovSigToDBCovSig(covSig CovenantSignatureInfo) stakerdb.PubKeySigPair {
 	return stakerdb.NewCovenantMemberSignature(covSig.Signature, covSig.PubKey)
 }
 
-func babylonCovSigsToDBSigSigs(covSigs []cl.CovenantSignatureInfo) []stakerdb.PubKeySigPair {
+func babylonCovSigsToDBSigSigs(covSigs []CovenantSignatureInfo) []stakerdb.PubKeySigPair {
 	sigSigs := make([]stakerdb.PubKeySigPair, len(covSigs))
 
 	for i := range covSigs {

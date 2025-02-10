@@ -328,6 +328,10 @@ func (app *App) Stop() error {
 	return stopErr
 }
 
+func (app *App) GetTxTracker() *stakerdb.TrackedTransactionStore {
+	return app.txTracker
+}
+
 // handleNewBlocks handles new blocks.
 func (app *App) handleNewBlocks(blockNotifier *notifier.BlockEpochEvent) {
 	defer app.wg.Done()
@@ -386,7 +390,7 @@ func (app *App) handlePendingTransaction(stakingTxHash *chainhash.Hash) {
 
 // handleVerifiedTransaction handles transactions which status is VERIFIED in babylon node
 func (app *App) handleVerifiedTransaction(stakingTxHash *chainhash.Hash) {
-	txHashCopy := *stakingTxHash
+	txHashCopy := *stakingTxHash // wj:왜 copy해야하나?
 	storedTx, _ := app.mustGetTransactionAndStakerAddress(&txHashCopy)
 	app.wg.Add(1)
 	go app.activateVerifiedDelegation(
@@ -531,7 +535,7 @@ func (app *App) checkAndHandleStoredTransactions() error {
 		}
 
 		// Check transaction status
-		switch di.Status {
+		switch di.GetStatusDesc() {
 		case BabylonPendingStatus:
 			app.handlePendingTransaction(txHash)
 		case BabylonVerifiedStatus:
@@ -725,8 +729,8 @@ func (app *App) sendUnbondingTxToBtcWithWitness(
 		return fmt.Errorf("failed to get transaction <%s> delegation info from babylon: %w", stakingTxHash.String(), err)
 	}
 
-	if !strings.EqualFold(di.Status, BabylonActiveStatus) {
-		return fmt.Errorf("cannot create witness for sending unbonding tx. Staking transaction is in invalid state: %s", di.Status)
+	if !strings.EqualFold(di.GetStatusDesc(), BabylonActiveStatus) {
+		return fmt.Errorf("cannot create witness for sending unbonding tx. Staking transaction is in invalid state: %s", di.GetStatusDesc())
 	}
 
 	unbondingSpendInfo, err := buildUnbondingSpendInfo(
@@ -1157,6 +1161,9 @@ func (app *App) handleStakingEvents() {
 			// }
 			app.logStakingEventReceived(ev)
 			storedTx, _ := app.mustGetTransactionAndStakerAddress(&ev.stakingTxHash)
+
+			// di, err := app.babylonClient.QueryDelegationInfo(&ev.stakingTxHash)
+
 			app.wg.Add(1)
 			go app.activateVerifiedDelegation(
 				storedTx.StakingTx,
@@ -1646,8 +1653,8 @@ func (app *App) UnbondStaking(
 		return nil, fmt.Errorf("failed to get transaction <%s> delegation info from babylon: %w", stakingTxHash.String(), err)
 	}
 
-	if !strings.EqualFold(di.Status, BabylonActiveStatus) {
-		return nil, fmt.Errorf("cannot unbond transaction which is not active. Current status: %s", di.Status)
+	if !strings.EqualFold(di.GetStatusDesc(), BabylonActiveStatus) {
+		return nil, fmt.Errorf("cannot unbond transaction which is not active. Current status: %s", di.GetStatusDesc())
 	}
 
 	// unbondingData := &stakerdb.UnbondingStoreData{
