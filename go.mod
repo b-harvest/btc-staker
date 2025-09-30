@@ -359,7 +359,7 @@ replace (
 	cosmossdk.io/core => cosmossdk.io/core v0.11.3
 	github.com/99designs/keyring => github.com/cosmos/keyring v1.2.0
 	// Use local babylon repo with multi-sig btcstaker support
-	github.com/babylonlabs-io/babylon/v4 => ../../babylon-backport-merge/babylon
+	github.com/babylonlabs-io/babylon/v4 => github.com/b-harvest/babylon/v4 v4.0.0-20250930055132-19cb132c5a0a
 	// LND brings unreleased `67b8efd3ba53` version of btcd which contains bug in
 	// rpc client described here: https://github.com/btcsuite/btcd/commit/42d6eba84bf9dc23b1182a35570bcd8f7f25616f
 	// TODO: remove this once LND releases a new version with fixed btcd
