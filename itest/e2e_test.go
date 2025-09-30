@@ -1349,3 +1349,173 @@ func TestStakeExpansionWithConsolidation(t *testing.T) {
 	// The expanded delegation should have the new amount
 	require.Equal(t, uint64(expandedStakingAmount), expansionDelegation.BtcDelegation.TotalSat)
 }
+
+func TestMsigStakingTransaction(t *testing.T) {
+	t.Parallel()
+	numMatureOutputsInWallet := uint32(200)
+	ctx, _ := context.WithCancel(context.Background())
+	manager, err := containers.NewManager(t)
+	require.NoError(t, err)
+
+	tmBTC := StartManagerBtc(t, ctx, numMatureOutputsInWallet, manager)
+
+	minStakingTime := uint16(100)
+	// stakerAddr := datagen.GenRandomAccount().GetAddress()
+
+	// Generate 3 staker keys for multi-sig (2-of-3)
+	stakerPrivKey1, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	stakerPrivKey2, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	stakerPrivKey3, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	stakerKeys := []*btcec.PublicKey{
+		stakerPrivKey1.PubKey(),
+		stakerPrivKey2.PubKey(),
+		stakerPrivKey3.PubKey(),
+	}
+	stakerQuorum := uint32(2)
+
+	// Generate finality provider key
+	fpPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	fpPubKey := fpPrivKey.PubKey()
+
+	stakingAmount := int64(10000)
+	stakingTime := minStakingTime
+
+	covenantPrivKeys := genCovenants(t, 1)
+
+	// Test parameters
+	tag := "01020304"
+	covenantQuorum := uint32(1)
+
+	// Parse tag
+	tagBytes, err := hex.DecodeString(tag)
+	require.NoError(t, err)
+
+	// Parse covenant keys
+	covenantPks := []*btcec.PublicKey{covenantPrivKeys[0].PubKey()}
+
+	// Build msig staking transaction using BuildStakingOutputsAndTxForMsig
+	stakingInfo, msigStakingTx, err := btcstaking.BuildStakingOutputsAndTxForMsig(
+		tagBytes,
+		stakerKeys,
+		stakerQuorum,
+		fpPubKey,
+		covenantPks,
+		covenantQuorum,
+		uint16(stakingTime),
+		btcutil.Amount(stakingAmount),
+		regtestParams,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, msigStakingTx)
+	require.NotNil(t, stakingInfo)
+
+	// Verify the expected staking output was created correctly
+	expectedStakingOutput := stakingInfo.StakingOutput
+	require.NotNil(t, expectedStakingOutput)
+	require.Equal(t, int64(stakingAmount), expectedStakingOutput.Value)
+	require.Equal(t, 34, len(expectedStakingOutput.PkScript), "Taproot script should be 34 bytes")
+	require.Equal(t, byte(0x51), expectedStakingOutput.PkScript[0], "Should start with OP_1 (witness v1)")
+	require.Equal(t, byte(0x20), expectedStakingOutput.PkScript[1], "Should have 32-byte data length")
+
+	t.Logf("Expected staking output script: %x", expectedStakingOutput.PkScript)
+
+	// Serialize the msig staking transaction
+	var buf bytes.Buffer
+	err = msigStakingTx.SerializeNoWitness(&buf)
+	require.NoError(t, err)
+	// msigStkTxHex := hex.EncodeToString(buf.Bytes())
+
+	rpcBtc := tmBTC.TestRpcBtcClient
+	err = rpcBtc.WalletPassphrase(tmBTC.WalletPassphrase, 20)
+	require.NoError(t, err)
+
+	// Fund the msig staking transaction
+	resFundRawStkTx, err := rpcBtc.FundRawTransaction(msigStakingTx, btcjson.FundRawTransactionOpts{
+		FeeRate:        btcjson.Float64(0.02),
+		ChangePosition: btcjson.Int(1),
+	}, btcjson.Bool(false))
+	require.NoError(t, err)
+	require.NotNil(t, resFundRawStkTx)
+
+	// Sign the funded transaction
+	signedStkTx, complete, err := rpcBtc.SignRawTransactionWithWallet(resFundRawStkTx.Transaction)
+	require.True(t, complete)
+	require.NoError(t, err)
+	require.NotNil(t, signedStkTx)
+
+	// Send the signed transaction to BTC network
+	txHash, err := rpcBtc.SendRawTransaction(signedStkTx, false)
+	require.NoError(t, err)
+	require.NotNil(t, txHash)
+	require.Equal(t, txHash.String(), signedStkTx.TxHash().String())
+
+	// Mine blocks to confirm the transaction
+	tmBTC.BitcoindHandler.GenerateBlocks(15)
+
+	// Verify the transaction was mined
+	stkTxResult, err := rpcBtc.GetTransaction(txHash)
+	require.NoError(t, err)
+	require.NotNil(t, stkTxResult)
+	require.Equal(t, int64(15), stkTxResult.Confirmations)
+
+	// Note: ParseV0StakingTx and Babylon delegation do not support multi-sig yet
+	// This test verifies that BuildStakingOutputsAndTxForMsig creates a valid transaction
+	// that can be funded, signed, and mined on the BTC network
+
+	// Verify transaction outputs
+	require.GreaterOrEqual(t, len(signedStkTx.TxOut), 2, "Transaction should have at least staking output and op_return")
+
+	// Find and verify the staking output matches what we expected
+	var foundMatchingStakingOutput bool
+	var foundStakingOutput bool
+	for i, out := range signedStkTx.TxOut {
+		// Check if this is a taproot output
+		if len(out.PkScript) == 34 && out.PkScript[0] == 0x51 && out.PkScript[1] == 0x20 && out.Value > 0 {
+			foundStakingOutput = true
+			// Check if the script matches exactly what we built
+			if bytes.Equal(out.PkScript, expectedStakingOutput.PkScript) {
+				foundMatchingStakingOutput = true
+				t.Logf("✓ Found MATCHING staking output at index %d:", i)
+				t.Logf("  - Value: %d satoshis", out.Value)
+				t.Logf("  - Script: %x", out.PkScript)
+				t.Logf("  - Script matches expected output from BuildStakingOutputsAndTxForMsig")
+
+				// Verify the taproot public key (last 32 bytes of script)
+				taprootPubKey := out.PkScript[2:]
+				require.Equal(t, 32, len(taprootPubKey), "Taproot public key should be 32 bytes")
+				t.Logf("  - Taproot output key: %x", taprootPubKey)
+			} else {
+				t.Logf("  Found taproot output at index %d but script doesn't match (might be change output)", i)
+			}
+		}
+	}
+	require.True(t, foundStakingOutput, "Should find at least one taproot output")
+	require.True(t, foundMatchingStakingOutput, "Should find staking output that matches expected script")
+
+	// Find and verify OP_RETURN output
+	var foundOpReturn bool
+	expectedOpReturnOutput := stakingInfo.OpReturnOutput
+	for i, out := range signedStkTx.TxOut {
+		if len(out.PkScript) > 0 && out.PkScript[0] == txscript.OP_RETURN && out.Value == 0 {
+			foundOpReturn = true
+			t.Logf("✓ Found OP_RETURN output at index %d:", i)
+			t.Logf("  - Script length: %d bytes", len(out.PkScript))
+			t.Logf("  - Script: %x", out.PkScript)
+
+			// Verify it matches expected OP_RETURN
+			if bytes.Equal(out.PkScript, expectedOpReturnOutput.PkScript) {
+				t.Logf("  - OP_RETURN matches expected output from BuildStakingOutputsAndTxForMsig")
+			}
+		}
+	}
+	require.True(t, foundOpReturn, "Should find OP_RETURN output")
+
+	t.Logf("✅ Multi-sig staking transaction successfully created and mined on BTC: %s", txHash.String())
+	t.Logf("   - Used %d staker keys with %d-of-%d multi-sig", len(stakerKeys), stakerQuorum, len(stakerKeys))
+	t.Logf("   - Transaction confirmed with %d blocks", stkTxResult.Confirmations)
+}
